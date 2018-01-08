@@ -8,10 +8,11 @@
     <orderEntry type="jdk" jdkName="1.8" jdkType="JavaSDK" />
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="library" name="ProgrammingInterface" level="project" />
+    <orderEntry type="library" name="commons-cli:commons-cli:1.3.1" level="project" />
     <orderEntry type="module-library">
       <library>
         <CLASSES>
-          <root url="jar://$MODULE_DIR$/lib/bcpkix-jdk15on-1.54.jar!/" />
+          <root url="jar://$MODULE_DIR$/lib/bcpg-jdk15on-1.57.jar!/" />
         </CLASSES>
         <JAVADOC />
         <SOURCES />
@@ -20,7 +21,7 @@
     <orderEntry type="module-library">
       <library>
         <CLASSES>
-          <root url="jar://$MODULE_DIR$/lib/bcprov-jdk15on-1.54.jar!/" />
+          <root url="jar://$MODULE_DIR$/lib/bcpkix-jdk15on-1.57.jar!/" />
         </CLASSES>
         <JAVADOC />
         <SOURCES />
@@ -29,7 +30,7 @@
     <orderEntry type="module-library">
       <library>
         <CLASSES>
-          <root url="jar://$MODULE_DIR$/lib/slf4j-api-1.7.16.jar!/" />
+          <root url="jar://$MODULE_DIR$/lib/bcprov-jdk15on-1.57.jar!/" />
         </CLASSES>
         <JAVADOC />
         <SOURCES />
@@ -38,7 +39,7 @@
     <orderEntry type="module-library">
       <library>
         <CLASSES>
-          <root url="jar://$MODULE_DIR$/lib/slf4j-jdk14-1.7.16.jar!/" />
+          <root url="jar://$MODULE_DIR$/lib/slf4j-api-1.7.25.jar!/" />
         </CLASSES>
         <JAVADOC />
         <SOURCES />
@@ -47,7 +48,16 @@
     <orderEntry type="module-library">
       <library>
         <CLASSES>
-          <root url="jar://$MODULE_DIR$/lib/sshd-core-1.2.0.jar!/" />
+          <root url="jar://$MODULE_DIR$/lib/slf4j-jdk14-1.7.25.jar!/" />
+        </CLASSES>
+        <JAVADOC />
+        <SOURCES />
+      </library>
+    </orderEntry>
+    <orderEntry type="module-library">
+      <library>
+        <CLASSES>
+          <root url="jar://$MODULE_DIR$/lib/sshd-core-1.6.0.jar!/" />
         </CLASSES>
         <JAVADOC />
         <SOURCES />
@@ -60,25 +70,6 @@
         </CLASSES>
         <JAVADOC />
         <SOURCES />
-      </library>
-    </orderEntry>
-    <orderEntry type="module-library">
-      <library>
-        <CLASSES>
-          <root url="jar://$MODULE_DIR$/lib/bcpg-jdk15on-1.54.jar!/" />
-        </CLASSES>
-        <JAVADOC />
-        <SOURCES />
-      </library>
-    </orderEntry>
-    <orderEntry type="library" name="commons-cli:commons-cli:1.3.1" level="project" />
-    <orderEntry type="module-library">
-      <library name="sshd-sources">
-        <CLASSES />
-        <JAVADOC />
-        <SOURCES>
-          <root url="file://$MODULE_DIR$/../apache-sshd-1.2.0/sshd-core/src/main/java" />
-        </SOURCES>
       </library>
     </orderEntry>
   </component>

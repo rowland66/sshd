@@ -3,23 +3,16 @@ package org.rowland.jinix.sshd;
 import org.apache.sshd.common.channel.PtyMode;
 import org.apache.sshd.common.util.GenericUtils;
 import org.apache.sshd.common.util.ValidateUtils;
-import org.apache.sshd.server.Command;
-import org.apache.sshd.server.Environment;
-import org.apache.sshd.server.ExitCallback;
-import org.apache.sshd.server.SessionAware;
+import org.apache.sshd.server.*;
 import org.apache.sshd.server.channel.PuttyRequestHandler;
 import org.apache.sshd.server.session.ServerSession;
 import org.apache.sshd.server.session.ServerSessionHolder;
-import org.apache.sshd.server.shell.InvertedShell;
-import org.apache.sshd.server.shell.TtyFilterInputStream;
-import org.apache.sshd.server.shell.TtyFilterOutputStream;
 import org.rowland.jinix.exec.ExecServer;
 import org.rowland.jinix.exec.InvalidExecutableException;
 import org.rowland.jinix.io.JinixFileDescriptor;
 import org.rowland.jinix.io.JinixFileInputStream;
 import org.rowland.jinix.io.JinixFileOutputStream;
 import org.rowland.jinix.lang.JinixRuntime;
-import org.rowland.jinix.naming.FileChannel;
 import org.rowland.jinix.proc.ProcessManager;
 
 import java.io.*;
@@ -61,28 +54,27 @@ public class JinixShell implements Command, SessionAware {
         try {
             slaveFileDescriptor.getHandle().duplicate();
             slaveFileDescriptor.getHandle().duplicate();
-            shellPid = Sshd.execServer.exec(null, "/bin/jsh.jar", new String[]{"/home"}, 0,
-                    slaveFileDescriptor.getHandle(), slaveFileDescriptor.getHandle(), slaveFileDescriptor.getHandle());
+
+            shellPid = JinixRuntime.getRuntime().exec(null, "/bin/jsh.jar", new String[]{"/home"}, 0,
+                    slaveFileDescriptor, slaveFileDescriptor, slaveFileDescriptor);
+
+            Sshd.processManager.setProcessTerminalId(shellPid, terminalId);
             Sshd.terminalServer.linkProcessToTerminal(terminalId, shellPid);
+
         } catch (FileNotFoundException | InvalidExecutableException e) {
             throw new RuntimeException(e);
         }
 
         // This is confusing. The inputstream is the output from the exec'd process, and the output stream
         // is the input.
-        try {
-            shellOut = new BufferedInputStream(new JinixFileInputStream(masterFileDescriptor));
-            shellIn = new JinixFileOutputStream(masterFileDescriptor);
+        shellOut = new BufferedInputStream(new JinixFileInputStream(masterFileDescriptor));
+        shellIn = new JinixFileOutputStream(masterFileDescriptor);
 
-            outputThread = new OutputThread(shellOut);
-            inputThread = new InputThread(shellIn);
+        outputThread = new OutputThread(shellOut);
+        inputThread = new InputThread(shellIn);
 
-            outputThread.start();
-            inputThread.start();
-        } catch (FileNotFoundException e) {
-            // This will never happen
-            throw new RuntimeException(e);
-        }
+        outputThread.start();
+        inputThread.start();
     }
 
     //@Override

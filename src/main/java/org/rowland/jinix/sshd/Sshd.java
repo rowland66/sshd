@@ -6,6 +6,7 @@ import org.apache.sshd.server.ServerBuilder;
 import org.apache.sshd.server.SshServer;
 import org.apache.sshd.server.auth.password.PasswordAuthenticator;
 import org.apache.sshd.server.auth.password.PasswordChangeRequiredException;
+import org.apache.sshd.server.channel.ChannelSessionFactory;
 import org.apache.sshd.server.keyprovider.SimpleGeneratorHostKeyProvider;
 import org.apache.sshd.server.session.ServerSession;
 import org.rowland.jinix.exec.ExecServer;
@@ -83,7 +84,11 @@ public class Sshd extends SshServer {
             }
         }
 
+        // Processing after fork() starts here.
         mainThread = Thread.currentThread();
+
+        // Disassociate ourselves from our parents session group and process group.
+        JinixRuntime.getRuntime().setProcessSessionId();
 
         try {
             System.in.close();
@@ -164,7 +169,7 @@ public class Sshd extends SshServer {
 
         JinixRuntime.getRuntime().registerSignalHandler(new ProcessSignalHandler() {
             @Override
-            public void handleSignal(ProcessManager.Signal signal) {
+            public boolean handleSignal(ProcessManager.Signal signal) {
                 if (signal == ProcessManager.Signal.TERMINATE) {
                     try {
                         System.out.println("TERM signal received, shutting down...");
@@ -174,7 +179,9 @@ public class Sshd extends SshServer {
                         e.printStackTrace(System.err);
                     }
                     mainThread.interrupt();
+                    return true;
                 }
+                return false;
             }
         });
 
