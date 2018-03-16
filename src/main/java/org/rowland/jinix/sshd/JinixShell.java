@@ -14,18 +14,18 @@ import org.rowland.jinix.io.JinixFileInputStream;
 import org.rowland.jinix.io.JinixFileOutputStream;
 import org.rowland.jinix.lang.JinixRuntime;
 import org.rowland.jinix.proc.ProcessManager;
+import org.rowland.jinix.terminal.*;
 
 import java.io.*;
 import java.rmi.RemoteException;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 
 /**
  * A sshd server Command that provides a JinixShell (jsh).
  */
-public class JinixShell implements Command, SessionAware {
+public class JinixShell implements Command, SessionAware, SignalListener {
 
+    private static int debugInc = 0;
     private int shellPid;
     private ServerSession session;
     private InputStream in;
@@ -43,38 +43,60 @@ public class JinixShell implements Command, SessionAware {
 
     public void start(Environment env) throws IOException {
 
-        Map<PtyMode, Integer> modes = resolveShellTtyOptions(env.getPtyModes());
-        Map<org.rowland.jinix.terminal.PtyMode, Integer> jinixModes = mapTtyOptionsToJinix(modes);
-        short terminalId = Sshd.terminalServer.createTerminal(jinixModes);
-        JinixFileDescriptor masterFileDescriptor =
-                new JinixFileDescriptor(Sshd.terminalServer.getTerminalMaster(terminalId));
-        JinixFileDescriptor slaveFileDescriptor =
-                new JinixFileDescriptor(Sshd.terminalServer.getTerminalSlave(terminalId));
-
         try {
-            slaveFileDescriptor.getHandle().duplicate();
-            slaveFileDescriptor.getHandle().duplicate();
+            Map<PtyMode, Integer> modes = resolveShellTtyOptions(env.getPtyModes());
+            short terminalId = Sshd.terminalServer.createTerminal();
 
-            shellPid = JinixRuntime.getRuntime().exec(null, "/bin/jsh.jar", new String[]{"/home"}, 0,
-                    slaveFileDescriptor, slaveFileDescriptor, slaveFileDescriptor);
+            TerminalAttributes termAttrs = Sshd.terminalServer.getTerminalAttributes(terminalId);
+            mapToJinixInputModes(modes, termAttrs.inputModes);
+            mapToJinixOutputModes(modes, termAttrs.outputModes);
+            mapToJinixLocalModes(modes, termAttrs.localModes);
+            mapJinixSpecialCharacters(modes, termAttrs.specialCharacterMap);
+            Sshd.terminalServer.setTerminalAttributes(terminalId, termAttrs);
 
-            Sshd.processManager.setProcessTerminalId(shellPid, terminalId);
-            Sshd.terminalServer.linkProcessToTerminal(terminalId, shellPid);
+            JinixFileDescriptor masterFileDescriptor =
+                    new JinixFileDescriptor(Sshd.terminalServer.getTerminalMaster(terminalId));
+            JinixFileDescriptor slaveFileDescriptor =
+                    new JinixFileDescriptor(Sshd.terminalServer.getTerminalSlave(terminalId));
 
-        } catch (FileNotFoundException | InvalidExecutableException e) {
-            throw new RuntimeException(e);
+            try {
+                Properties shellEnv = new Properties();
+                shellEnv.put("TERM", env.getEnv().get(Environment.ENV_TERM));
+                shellEnv.put("LINES",env.getEnv().get(Environment.ENV_LINES));
+                shellEnv.put("COLUMNS",env.getEnv().get(Environment.ENV_COLUMNS));
+                shellEnv.put("LOGNAME",env.getEnv().get(Environment.ENV_USER));
+
+                // , "-Xdebug", "-Xrunjdwp:transport=dt_socket,address=5557,server=y,suspend=n"
+                int debugPort = 5557 + debugInc;
+                debugInc++;
+                shellPid = JinixRuntime.getRuntime().exec(null, "/bin/jsh.jar", new String[]{"/home"}, 0,
+                        slaveFileDescriptor, slaveFileDescriptor, slaveFileDescriptor);
+
+                Sshd.processManager.setProcessTerminalId(shellPid, terminalId);
+                Sshd.terminalServer.linkProcessToTerminal(terminalId, shellPid);
+
+                env.addSignalListener(this, Signal.WINCH);
+
+            } catch (FileNotFoundException | InvalidExecutableException e) {
+                throw new RuntimeException(e);
+            } finally {
+                slaveFileDescriptor.close();
+            }
+
+            // This is confusing. The inputstream is the output from the exec'd process, and the output stream
+            // is the input.
+            shellOut = new BufferedInputStream(new JinixFileInputStream(masterFileDescriptor));
+            shellIn = new JinixFileOutputStream(masterFileDescriptor);
+
+            outputThread = new OutputThread(shellOut);
+            inputThread = new InputThread(shellIn);
+
+            outputThread.start();
+            inputThread.start();
+        } catch (Exception e) {
+            e.printStackTrace(System.err);
+            throw e;
         }
-
-        // This is confusing. The inputstream is the output from the exec'd process, and the output stream
-        // is the input.
-        shellOut = new BufferedInputStream(new JinixFileInputStream(masterFileDescriptor));
-        shellIn = new JinixFileOutputStream(masterFileDescriptor);
-
-        outputThread = new OutputThread(shellOut);
-        inputThread = new InputThread(shellIn);
-
-        outputThread.start();
-        inputThread.start();
     }
 
     //@Override
@@ -111,21 +133,109 @@ public class JinixShell implements Command, SessionAware {
         this.exitCallback = callback;
     }
 
-    /**
-     * Convert PtyModes from the Mina sshd PtyMode enum to the Jinix enum
-     *
-     * @param inputMap
-     * @return
-     */
-    private Map<org.rowland.jinix.terminal.PtyMode, Integer>
-            mapTtyOptionsToJinix(Map<PtyMode, Integer> inputMap) {
-        Map<org.rowland.jinix.terminal.PtyMode, Integer> outputMap =
-                new HashMap<org.rowland.jinix.terminal.PtyMode, Integer>(inputMap.size());
-        for (Map.Entry<PtyMode, ?> inputEntry : inputMap.entrySet()) {
-            outputMap.put(org.rowland.jinix.terminal.PtyMode.fromInt(inputEntry.getKey().toInt()),
-                    (Integer) inputEntry.getValue());
+    @Override
+    public void signal(Signal signal) {
+        System.out.println("Received signal: "+signal.toString());
+        //JinixRuntime.getRuntime().sendSignal(shellPid, org.rowland.jinix.proc.ProcessManager.Signal.WINCH);
+    }
+
+    private void mapToJinixInputModes(Map<PtyMode, Integer> ptyModes, Set<InputMode> termInputAttrs) {
+
+        if (ptyModes.containsKey(PtyMode.INLCR)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.INLCR)) termInputAttrs.add(InputMode.INLCR);
+            else termInputAttrs.remove(InputMode.INLCR);
         }
-        return outputMap;
+        if (ptyModes.containsKey(PtyMode.IGNCR)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.IGNCR)) termInputAttrs.add(InputMode.IGNCR);
+            else termInputAttrs.remove(InputMode.IGNCR);
+        }
+        if (ptyModes.containsKey(PtyMode.ICRNL)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.ICRNL)) termInputAttrs.add(InputMode.ICRNL);
+            else termInputAttrs.remove(InputMode.ICRNL);
+        }
+        if (ptyModes.containsKey(PtyMode.IUCLC)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.IUCLC)) termInputAttrs.add(InputMode.IUCLC);
+            else termInputAttrs.remove(InputMode.IUCLC);
+        }
+        if (ptyModes.containsKey(PtyMode.IXON)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.IXON)) termInputAttrs.add(InputMode.IXON);
+            else termInputAttrs.remove(InputMode.IXON);
+        }
+        if (ptyModes.containsKey(PtyMode.IXANY)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.IXANY)) termInputAttrs.add(InputMode.IXANY);
+            else termInputAttrs.remove(InputMode.IXANY);
+        }
+        if (ptyModes.containsKey(PtyMode.IXOFF)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.IXOFF)) termInputAttrs.add(InputMode.IXOFF);
+            else termInputAttrs.remove(InputMode.IXOFF);
+        }
+        if (ptyModes.containsKey(PtyMode.IMAXBEL)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.IMAXBEL)) termInputAttrs.add(InputMode.IMAXBEL);
+            else termInputAttrs.remove(InputMode.IMAXBEL);
+        }
+    }
+
+    private void mapToJinixOutputModes(Map<PtyMode, Integer> ptyModes, Set<OutputMode> termOutputAttrs) {
+
+        if (ptyModes.containsKey(PtyMode.OPOST)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.OPOST)) termOutputAttrs.add(OutputMode.OPOST);
+            else termOutputAttrs.remove(OutputMode.OPOST);
+        }
+        if (ptyModes.containsKey(PtyMode.OLCUC)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.OLCUC)) termOutputAttrs.add(OutputMode.OLCUC);
+            else termOutputAttrs.remove(OutputMode.OLCUC);
+        }
+        if (ptyModes.containsKey(PtyMode.ONLCR)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.ONLCR)) termOutputAttrs.add(OutputMode.ONLCR);
+            else termOutputAttrs.remove(OutputMode.ONLCR);
+        }
+        if (ptyModes.containsKey(PtyMode.OCRNL)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.OCRNL)) termOutputAttrs.add(OutputMode.OCRNL);
+            else termOutputAttrs.remove(OutputMode.OCRNL);
+        }
+        if (ptyModes.containsKey(PtyMode.ONOCR)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.ONOCR)) termOutputAttrs.add(OutputMode.ONOCR);
+            else termOutputAttrs.remove(OutputMode.ONOCR);
+        }
+        if (ptyModes.containsKey(PtyMode.ONLRET)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.ONLRET)) termOutputAttrs.add(OutputMode.ONLRET);
+            else termOutputAttrs.remove(OutputMode.ONLRET);
+        }
+    }
+
+    private void mapToJinixLocalModes(Map<PtyMode, Integer> ptyModes, Set<LocalMode> termLocalAttrs) {
+        if (ptyModes.containsKey(PtyMode.ISIG)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.ISIG)) termLocalAttrs.add(LocalMode.ISIG);
+            else termLocalAttrs.remove(LocalMode.ISIG);
+        }
+        if (ptyModes.containsKey(PtyMode.ICANON)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.ICANON)) termLocalAttrs.add(LocalMode.ICANON);
+            else termLocalAttrs.remove(LocalMode.ICANON);
+        }
+        if (ptyModes.containsKey(PtyMode.XCASE)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.XCASE)) termLocalAttrs.add(LocalMode.XCASE);
+            else termLocalAttrs.remove(LocalMode.XCASE);
+        }
+        if (ptyModes.containsKey(PtyMode.ECHO)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.ECHO)) termLocalAttrs.add(LocalMode.ECHO);
+            else termLocalAttrs.remove(LocalMode.ECHO);
+        }
+        if (ptyModes.containsKey(PtyMode.TOSTOP)) {
+            if (PtyMode.getBooleanSettingValue(ptyModes, PtyMode.TOSTOP)) termLocalAttrs.add(LocalMode.TOSTOP);
+            else termLocalAttrs.remove(LocalMode.TOSTOP);
+        }
+    }
+
+    private void mapJinixSpecialCharacters(Map<PtyMode, Integer> ptyModes, Map<SpecialCharacter, Byte> termAttrsChars) {
+        if (ptyModes.get(PtyMode.VINTR) != null) termAttrsChars.put(SpecialCharacter.VINTR, (byte) (0xff & ptyModes.get(PtyMode.VINTR)));
+        if (ptyModes.get(PtyMode.VQUIT) != null) termAttrsChars.put(SpecialCharacter.VQUIT, (byte) (0xff & ptyModes.get(PtyMode.VQUIT)));
+        if (ptyModes.get(PtyMode.VERASE) != null) termAttrsChars.put(SpecialCharacter.VERASE, (byte) (0xff & ptyModes.get(PtyMode.VERASE)));
+        if (ptyModes.get(PtyMode.VKILL) != null) termAttrsChars.put(SpecialCharacter.VKILL, (byte) (0xff & ptyModes.get(PtyMode.VKILL)));
+        if (ptyModes.get(PtyMode.VEOF) != null) termAttrsChars.put(SpecialCharacter.VEOF, (byte) (0xff & ptyModes.get(PtyMode.VEOF)));
+        if (ptyModes.get(PtyMode.VEOL) != null) termAttrsChars.put(SpecialCharacter.VEOL, (byte) (0xff & ptyModes.get(PtyMode.VEOL)));
+        if (ptyModes.get(PtyMode.VSUSP) != null) termAttrsChars.put(SpecialCharacter.VSUSP, (byte) (0xff & ptyModes.get(PtyMode.VSUSP)));
+        if (ptyModes.get(PtyMode.VSTOP) != null) termAttrsChars.put(SpecialCharacter.VSTOP, (byte) (0xff & ptyModes.get(PtyMode.VSTOP)));
+        if (ptyModes.get(PtyMode.VSTART) != null) termAttrsChars.put(SpecialCharacter.VSTART, (byte) (0xff & ptyModes.get(PtyMode.VSTART)));
     }
 
     /**
@@ -147,6 +257,7 @@ public class JinixShell implements Command, SessionAware {
                 int n;
                 int avail = 0;
                 while ((n = is.read()) > 0) {
+                    //System.out.print(Integer.toHexString(n));
                     out.write(n);
                     if (avail == 0) {
                         avail = is.available();
