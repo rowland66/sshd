@@ -69,7 +69,7 @@ public class JinixShell implements Command, SessionAware, SignalListener {
                 // , "-Xdebug", "-Xrunjdwp:transport=dt_socket,address=5557,server=y,suspend=n"
                 int debugPort = 5557 + debugInc;
                 debugInc++;
-                shellPid = JinixRuntime.getRuntime().exec(null, "/bin/jsh.jar", new String[]{"/home"}, 0,
+                shellPid = JinixRuntime.getRuntime().exec(null, "/bin/jsh.jar", new String[]{"/home"}, -1, -1,
                         slaveFileDescriptor, slaveFileDescriptor, slaveFileDescriptor);
 
                 Sshd.processManager.setProcessTerminalId(shellPid, terminalId);
