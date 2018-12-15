@@ -9,10 +9,12 @@ import org.apache.sshd.server.session.ServerSession;
 import org.apache.sshd.server.session.ServerSessionHolder;
 import org.rowland.jinix.exec.ExecServer;
 import org.rowland.jinix.exec.InvalidExecutableException;
+import org.rowland.jinix.io.JinixFile;
 import org.rowland.jinix.io.JinixFileDescriptor;
 import org.rowland.jinix.io.JinixFileInputStream;
 import org.rowland.jinix.io.JinixFileOutputStream;
 import org.rowland.jinix.lang.JinixRuntime;
+import org.rowland.jinix.lang.JinixSystem;
 import org.rowland.jinix.proc.ProcessManager;
 import org.rowland.jinix.terminal.*;
 
@@ -66,11 +68,24 @@ public class JinixShell implements Command, SessionAware, SignalListener {
                 shellEnv.put("COLUMNS",env.getEnv().get(Environment.ENV_COLUMNS));
                 shellEnv.put("LOGNAME",env.getEnv().get(Environment.ENV_USER));
 
+                JinixFile environmentFile = new JinixFile("/config/environment.config");
+                Properties envProps = new Properties();
+                if (environmentFile.exists()) {
+                    try (Reader environmentFileReader = new BufferedReader(new InputStreamReader(new JinixFileInputStream(environmentFile)))) {
+                        envProps.load(environmentFileReader);
+                    }
+                } else {
+                    envProps.putAll(JinixSystem.getJinixProperties());
+                }
+
                 // , "-Xdebug", "-Xrunjdwp:transport=dt_socket,address=5557,server=y,suspend=n"
                 int debugPort = 5557 + debugInc;
                 debugInc++;
-                shellPid = JinixRuntime.getRuntime().exec(null, "/bin/jsh.jar", new String[]{"/home"}, -1, -1,
-                        slaveFileDescriptor, slaveFileDescriptor, slaveFileDescriptor);
+                shellPid = JinixRuntime.getRuntime().exec(envProps,
+                                                     "/bin/jsh.jar",
+                                                          new String[]{"/home"},
+                                             -1, -1,
+                                                          slaveFileDescriptor, slaveFileDescriptor, slaveFileDescriptor);
 
                 Sshd.processManager.setProcessTerminalId(shellPid, terminalId);
                 Sshd.terminalServer.linkProcessToTerminal(terminalId, shellPid);
