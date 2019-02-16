@@ -1,6 +1,7 @@
 package org.rowland.jinix.sshd;
 
 import org.apache.commons.cli.*;
+import org.apache.sshd.common.FactoryManager;
 import org.apache.sshd.common.config.VersionProperties;
 import org.apache.sshd.server.ServerBuilder;
 import org.apache.sshd.server.SshServer;
@@ -36,6 +37,7 @@ import java.security.PrivilegedAction;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Jinix ssh server.
@@ -82,21 +84,21 @@ public class Sshd extends SshServer {
                     // turn on debug logging.
                 }
             }
+        } else {
+            // Disassociate ourselves from our parents session group and process group.
+            JinixRuntime.getRuntime().setProcessSessionId();
+
+            try {
+                System.in.close();
+                System.out.close();
+                System.err.close();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
         }
 
         // Processing after fork() starts here.
         mainThread = Thread.currentThread();
-
-        // Disassociate ourselves from our parents session group and process group.
-        JinixRuntime.getRuntime().setProcessSessionId();
-
-        try {
-            System.in.close();
-            System.out.close();
-            System.err.close();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
 
         String configFile = DEFAULT_CONFIG_FILE;
         if (cmdLine.hasOption("f")) {
@@ -159,6 +161,7 @@ public class Sshd extends SshServer {
         server.setPort(port);
         server.setKeyPairProvider(new SimpleGeneratorHostKeyProvider(Paths.get(DEFAULT_HOST_DSS_KEYS)));
         server.setShellFactory(new JinixShellFactory());
+        //server.getProperties().put(FactoryManager.IDLE_TIMEOUT, TimeUnit.SECONDS.toMillis(10));
 
         server.setPasswordAuthenticator(new PasswordAuthenticator() {
             @Override
