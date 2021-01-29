@@ -1,6 +1,0 @@
-Manifest-Version: 1.0
-Class-Path: bcpg-jdk15on-1.57.jar bcpkix-jdk15on-1.57.jar bcprov-jdk15
- on-1.57.jar slf4j-api-1.7.25.jar slf4j-jdk14-1.7.25.jar sshd-core-1.6
- .0.jar tomcat-apr-5.5.23.jar commons-cli-1.3.1.jar
-Main-Class: org.rowland.jinix.sshd.Sshd
-

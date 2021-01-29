@@ -78,8 +78,8 @@ public class JinixShell implements Command, SessionAware, SignalListener {
                     envProps.putAll(JinixSystem.getJinixProperties());
                 }
 
-                // , "-Xdebug", "-Xrunjdwp:transport=dt_socket,address=5557,server=y,suspend=n"
-                int debugPort = 5557 + debugInc;
+                //, "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:"+debugPort
+                int debugPort = 6000 + debugInc;
                 debugInc++;
                 shellPid = JinixRuntime.getRuntime().exec(envProps,
                                                      "/bin/jsh.jar",
