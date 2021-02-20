@@ -23,10 +23,7 @@ import javax.naming.NamingException;
 import java.io.*;
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.nio.file.Files;
-import java.nio.file.NoSuchFileException;
-import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
+import java.nio.file.*;
 import java.rmi.NotBoundException;
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
@@ -45,13 +42,15 @@ import java.util.concurrent.TimeUnit;
 public class Sshd extends SshServer {
 
     private static final String DEFAULT_CONFIG_FILE = "/config/ssh/sshd.config";
-    private static final String DEFAULT_HOST_DSS_KEYS = "/config/ssh/ssh_host_dss_keys.ser";
 
     private static final String LOG_FILE_PROPERTY_NAME = "LogFile";
     private static final String DEFAULT_LOG_FILE = "/var/log/sshd.log";
 
     private static final String PID_FILE_PROPERTY_NAME = "PidFile";
     private static final String DEFAULT_PID_FILE = "/var/run/sshd.pid";
+
+    private static final String HOST_KEY_PROPERTY_NAME = "HostKey";
+    private static final String DEFAULT_HOST_KEY = "/config/ssh/ssh_host_dss_keys.ser";
 
     private static final String PORT_PROPERTY_NAME  = "Port";
     private static final String DEFAULT_PORT = "8000";
@@ -156,10 +155,25 @@ public class Sshd extends SshServer {
             port = Integer.parseInt(DEFAULT_PORT);
         }
 
+        String hostKeyFile = sshdConfig.getProperty(HOST_KEY_PROPERTY_NAME, DEFAULT_HOST_KEY);
+
+        if (hostKeyFile.equals(DEFAULT_HOST_KEY)) {
+            Path configFilePath = Path.of(configFile);
+            Path configFileDirectory = configFilePath.getParent();
+            if (!Files.exists(configFileDirectory)) {
+                try {
+                    System.out.println("Creating sshd config directory: " + configFileDirectory);
+                    Files.createDirectories(configFileDirectory);
+                } catch (IOException e) {
+                    System.err.println("Failed to create sshd config directory: " + configFileDirectory);
+                }
+            }
+        }
+
         server = ServerBuilder.builder().build();
         server.setIoServiceFactoryFactory(new org.apache.sshd.common.io.nio2.Nio2ServiceFactoryFactory());
         server.setPort(port);
-        server.setKeyPairProvider(new SimpleGeneratorHostKeyProvider(Paths.get(DEFAULT_HOST_DSS_KEYS)));
+        server.setKeyPairProvider(new SimpleGeneratorHostKeyProvider(Paths.get(DEFAULT_HOST_KEY)));
         server.setShellFactory(new JinixShellFactory());
         //server.getProperties().put(FactoryManager.IDLE_TIMEOUT, TimeUnit.SECONDS.toMillis(10));
 

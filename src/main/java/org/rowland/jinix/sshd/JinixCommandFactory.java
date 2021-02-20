@@ -1,9 +1,10 @@
 package org.rowland.jinix.sshd;
 
-import org.apache.sshd.server.Command;
-import org.apache.sshd.server.CommandFactory;
 import org.apache.sshd.server.Environment;
 import org.apache.sshd.server.ExitCallback;
+import org.apache.sshd.server.channel.ChannelSession;
+import org.apache.sshd.server.command.Command;
+import org.apache.sshd.server.command.CommandFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -15,7 +16,7 @@ import java.io.OutputStream;
 public class JinixCommandFactory implements CommandFactory {
 
     @Override
-    public Command createCommand(String command) {
+    public Command createCommand(ChannelSession channelSession, String s) throws IOException {
         return new CopyCommand();
     }
 
@@ -41,12 +42,12 @@ public class JinixCommandFactory implements CommandFactory {
         }
 
         @Override
-        public void start(Environment env) throws IOException {
+        public void start(ChannelSession channelSession, Environment env) throws IOException {
 
         }
 
         @Override
-        public void destroy() throws Exception {
+        public void destroy(ChannelSession channelSession) throws Exception {
 
         }
     }

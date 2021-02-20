@@ -1,13 +1,15 @@
 package org.rowland.jinix.sshd;
 
+import org.apache.sshd.common.channel.Channel;
 import org.apache.sshd.common.channel.PtyMode;
-import org.apache.sshd.common.util.GenericUtils;
+
 import org.apache.sshd.common.util.ValidateUtils;
 import org.apache.sshd.server.*;
+import org.apache.sshd.server.channel.ChannelSession;
 import org.apache.sshd.server.channel.PuttyRequestHandler;
+import org.apache.sshd.server.command.Command;
 import org.apache.sshd.server.session.ServerSession;
-import org.apache.sshd.server.session.ServerSessionHolder;
-import org.rowland.jinix.exec.ExecServer;
+
 import org.rowland.jinix.exec.InvalidExecutableException;
 import org.rowland.jinix.io.JinixFile;
 import org.rowland.jinix.io.JinixFileDescriptor;
@@ -25,7 +27,7 @@ import java.util.*;
 /**
  * A sshd server Command that provides a JinixShell (jsh).
  */
-public class JinixShell implements Command, SessionAware, SignalListener {
+public class JinixShell implements Command, SessionAware {
 
     private static int debugInc = 0;
     private int shellPid;
@@ -35,19 +37,24 @@ public class JinixShell implements Command, SessionAware, SignalListener {
     private OutputStream err;
     private ExitCallback exitCallback;
 
-    OutputStream shellIn;
-    InputStream shellOut;
-    OutputThread outputThread = null;
-    InputThread inputThread = null;
+    private OutputStream shellIn;
+    private InputStream shellOut;
+    private OutputThread outputThread = null;
+    private InputThread inputThread = null;
+
+    private Environment env;
+    private short terminalId;
 
     JinixShell() {
     }
 
-    public void start(Environment env) throws IOException {
+    public void start(ChannelSession channelSession, Environment env) throws IOException {
+
+        this.env = env;
 
         try {
             Map<PtyMode, Integer> modes = resolveShellTtyOptions(env.getPtyModes());
-            short terminalId = Sshd.terminalServer.createTerminal();
+            this.terminalId = Sshd.terminalServer.createTerminal();
 
             TerminalAttributes termAttrs = Sshd.terminalServer.getTerminalAttributes(terminalId);
             mapToJinixInputModes(modes, termAttrs.inputModes);
@@ -56,6 +63,10 @@ public class JinixShell implements Command, SessionAware, SignalListener {
             mapJinixSpecialCharacters(modes, termAttrs.specialCharacterMap);
             Sshd.terminalServer.setTerminalAttributes(terminalId, termAttrs);
 
+            Sshd.terminalServer.setTerminalSize(terminalId,
+                    Integer.parseInt(env.getEnv().get(Environment.ENV_COLUMNS)),
+                    Integer.parseInt(env.getEnv().get(Environment.ENV_LINES)));
+
             JinixFileDescriptor masterFileDescriptor =
                     new JinixFileDescriptor(Sshd.terminalServer.getTerminalMaster(terminalId));
             JinixFileDescriptor slaveFileDescriptor =
@@ -63,10 +74,10 @@ public class JinixShell implements Command, SessionAware, SignalListener {
 
             try {
                 Properties shellEnv = new Properties();
-                shellEnv.put("TERM", env.getEnv().get(Environment.ENV_TERM));
-                shellEnv.put("LINES",env.getEnv().get(Environment.ENV_LINES));
-                shellEnv.put("COLUMNS",env.getEnv().get(Environment.ENV_COLUMNS));
-                shellEnv.put("LOGNAME",env.getEnv().get(Environment.ENV_USER));
+                shellEnv.put("jinix.terminal.term", env.getEnv().get(Environment.ENV_TERM));
+                shellEnv.put("jinix.terminal.lines",env.getEnv().get(Environment.ENV_LINES));
+                shellEnv.put("jinix.terminal.columns",env.getEnv().get(Environment.ENV_COLUMNS));
+                shellEnv.put("jinix.terminal.logname",env.getEnv().get(Environment.ENV_USER));
 
                 JinixFile environmentFile = new JinixFile("/config/environment.config");
                 Properties envProps = new Properties();
@@ -77,6 +88,7 @@ public class JinixShell implements Command, SessionAware, SignalListener {
                 } else {
                     envProps.putAll(JinixSystem.getJinixProperties());
                 }
+                envProps.putAll(shellEnv);
 
                 //, "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:"+debugPort
                 int debugPort = 6000 + debugInc;
@@ -90,7 +102,7 @@ public class JinixShell implements Command, SessionAware, SignalListener {
                 Sshd.processManager.setProcessTerminalId(shellPid, terminalId);
                 Sshd.terminalServer.linkProcessToTerminal(terminalId, shellPid);
 
-                env.addSignalListener(this, Signal.WINCH);
+                env.addSignalListener(new WinchSignalListener(), Signal.WINCH);
 
             } catch (FileNotFoundException | InvalidExecutableException e) {
                 throw new RuntimeException(e);
@@ -114,9 +126,16 @@ public class JinixShell implements Command, SessionAware, SignalListener {
         }
     }
 
-    //@Override
+    @Override
+    public void destroy(ChannelSession channelSession) throws Exception {
+        System.err.println("JinixShell received destroy callback.");
+        Sshd.processManager.sendSignal(shellPid, ProcessManager.Signal.HANGUP);
+    }
+
+    @Override
     public void setSession(ServerSession session) {
         this.session = ValidateUtils.checkNotNull(session, "No server session");
+        System.err.println("Session set: "+session.getClientAddress());
     }
 
     // for some reason these modes provide best results BOTH with Linux SSH client and PUTTY
@@ -126,10 +145,6 @@ public class JinixShell implements Command, SessionAware, SignalListener {
         } else {
             return modes;
         }
-    }
-
-    public void destroy() throws Exception {
-        Sshd.processManager.sendSignal(shellPid, ProcessManager.Signal.HANGUP);
     }
 
     public void setInputStream(InputStream in) {
@@ -148,10 +163,21 @@ public class JinixShell implements Command, SessionAware, SignalListener {
         this.exitCallback = callback;
     }
 
-    @Override
-    public void signal(Signal signal) {
-        System.out.println("Received signal: "+signal.toString());
-        //JinixRuntime.getRuntime().sendSignal(shellPid, org.rowland.jinix.proc.ProcessManager.Signal.WINCH);
+    public class WinchSignalListener implements SignalListener {
+        public void signal(Channel channel, Signal signal) {
+            System.out.println("WINCH: columns=" + env.getEnv().get(Environment.ENV_COLUMNS) + ", lines=" + env.getEnv().get(Environment.ENV_LINES));
+            try {
+                Sshd.terminalServer.setTerminalSize(terminalId,
+                        Integer.parseInt(env.getEnv().get(Environment.ENV_COLUMNS)),
+                        Integer.parseInt(env.getEnv().get(Environment.ENV_LINES))
+                );
+                int foregroundProcessGroupId = Sshd.terminalServer.getTerminalForegroundProcessGroup(terminalId);
+                JinixRuntime.getRuntime().sendSignalProcessGroup(foregroundProcessGroupId, ProcessManager.Signal.WINCH);
+            } catch (RemoteException e) {
+                System.err.println("Failed processing WINCH signal");
+                e.printStackTrace(System.err);
+            }
+        }
     }
 
     private void mapToJinixInputModes(Map<PtyMode, Integer> ptyModes, Set<InputMode> termInputAttrs) {
@@ -273,7 +299,11 @@ public class JinixShell implements Command, SessionAware, SignalListener {
                 int avail = 0;
                 while ((n = is.read()) > 0) {
                     //System.out.print(Integer.toHexString(n));
-                    out.write(n);
+                    try {
+                        out.write(n);
+                    } catch (IOException e) {
+                        System.err.write(n);
+                    }
                     if (avail == 0) {
                         avail = is.available();
                         if (avail == 0) {
@@ -283,7 +313,7 @@ public class JinixShell implements Command, SessionAware, SignalListener {
                     }
                     avail--;
                 }
-
+                System.err.println("JinixShell Jsh reading thread exiting.");
                 shellOut.close();
                 shellIn.close();
 
@@ -317,6 +347,7 @@ public class JinixShell implements Command, SessionAware, SignalListener {
             } catch (IOException e) {
                 e.printStackTrace();
             }
+            System.err.println("JinixShell channel reading thread exited.");
         }
     }
 }
